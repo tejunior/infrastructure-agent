@@ -4,6 +4,7 @@ package dm
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/newrelic/newrelic-telemetry-sdk-go/telemetry"
 )
 
-const noCalculationMadeErrMsg = "no calculation made"
+const (
+	noCalculationMadeErrMsg = "no calculation made"
+	entityIDsHeader         = "X-NRI-Entity-Ids"
+)
 
 var errNoCalculation = errors.New(noCalculationMadeErrMsg)
 
@@ -30,10 +34,11 @@ func (l *telemetryErrLogger) Write(p []byte) (n int, err error) {
 	case "error":
 		telemetryLogger.Error(string(p))
 	case "debug":
-		telemetryLogger.Debug(string(p))
+		telemetryLogger.Info(string(p))
 	case "audit":
 		// payload should be logged only when customer enabled dm.submission feature traces.
 		trace.Telemetry(string(p))
+		telemetryLogger.Info(string(p))
 	}
 
 	return len(p), nil
@@ -52,6 +57,30 @@ func newTelemetryHarverster(conf MetricsSenderConfig, transport http.RoundTrippe
 		telemetryHarvesterWithTransport(transport, conf.LicenseKey, idnProvide),
 		telemetryHarvesterWithMetricApiUrl(conf.MetricApiURL),
 		telemetry.ConfigHarvestPeriod(conf.SubmissionPeriod),
+		func(config *telemetry.Config) {
+			config.HeaderProcessor = func(batch telemetry.DataBatch) (reqsH []telemetry.RequestHeader) {
+
+				entsSeen := make(map[string]bool, 100)
+				for i := range batch.GetDataTypes() {
+					if val, ok := batch.GetDataTypes()[i].GetAttributes()["nr.entity.id"]; ok {
+						key := fmt.Sprintf("%v", val)
+						if _, isOk := entsSeen[key]; !isOk {
+							entsSeen[key] = true
+						}
+					}
+				}
+				headerValue := ""
+				for key := range entsSeen {
+					headerValue = headerValue + key + ","
+				}
+				headerValue = headerValue[:len(headerValue)-1]
+				elog.WithField(entityIDsHeader, headerValue).Info("Setting telemetry SDK header")
+				return []telemetry.RequestHeader{{
+					Key:   entityIDsHeader,
+					Value: headerValue,
+				}}
+			}
+		},
 	)
 }
 
