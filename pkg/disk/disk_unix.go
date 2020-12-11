@@ -1,6 +1,6 @@
 // Copyright 2020 New Relic Corporation. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// +build linux darwin
+// +build linux darwin solaris
 
 // package disk provides access to common disk write operations
 package disk
