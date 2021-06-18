@@ -73,3 +73,8 @@ dev/release/pkg: ci/deps
 			-e TAG=0.0.0 \
 			-e SNAPSHOT=true \
 			$(BUILDER_IMG_TAG) make release/pkg
+
+.PHONY : ci/sync-s3
+ci/sync-s3:
+	@aws s3 rm --recursive s3://nr-downloads-ohai-testing/infrastructure_agent --dryrun
+	@aws s3 cp --exclude '*/infrastructure_agent/beta/*' --exclude '*/infrastructure_agent/test/*' --exclude '*/newrelic-infra.repo' s3://nr-downloads-main/infrastructure_agent/ s3://nr-downloads-ohai-testing/infrastructure_agent/ --dryrun
