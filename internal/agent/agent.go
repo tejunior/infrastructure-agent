@@ -655,7 +655,11 @@ func (a *Agent) Run() (err error) {
 
 	cfg := a.Context.cfg
 
-	a.cpuProfile()
+	f := a.cpuProfileStart()
+	if f != nil {
+		defer a.cpuProfileStop(f)
+	}
+
 	go a.intervalMemoryProfile()
 
 	if cfg.ConnectEnabled {
@@ -820,25 +824,35 @@ func (a *Agent) Run() (err error) {
 	}
 }
 
-func (a *Agent) cpuProfile() {
+func (a *Agent) cpuProfileStart() *os.File {
 
 	cfg := a.Context.cfg
 
 	// Start CPU profiling
 	if cfg.CPUProfile != "" {
-		clog := alog.WithField("cpuProfile", cfg.CPUProfile)
+
 		clog.Debug("Starting CPU profiling.")
 		f, err := os.Create(cfg.CPUProfile)
 		if err != nil {
 			clog.WithError(err).Error("could not create CPU profile file")
-		} else {
-			defer helpers.CloseQuietly(f)
-			if err := pprof.StartCPUProfile(f); err != nil {
-				clog.WithError(err).Error("could not start CPU profile")
-			}
-			defer pprof.StopCPUProfile()
+			return nil
 		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			clog.WithError(err).Error("could not start CPU profile")
+			helpers.CloseQuietly(f)
+			return nil
+		}
+		return f
 	}
+	return nil
+}
+
+func (a *Agent) cpuProfileStop(f *os.File) {
+	cfg := a.Context.cfg
+	clog := alog.WithField("cpuProfile", cfg.CPUProfile)
+	clog.Debug("Stopping CPU profiling.")
+	pprof.StopCPUProfile()
+	helpers.CloseQuietly(f)
 }
 
 func (a *Agent) intervalMemoryProfile() {
