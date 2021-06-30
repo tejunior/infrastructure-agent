@@ -207,6 +207,11 @@ type Config struct {
 	// Public: No
 	MemProfile string `yaml:"mem_profile" envconfig:"mem_profile" public:"false"`
 
+	// Interval in seconds to create memory profile snapshots, default 300 seconds (5min)
+	// Default: 300
+	// Public: No
+	MemProfileInterval int `yaml:"mem_profile_interval" envconfig:"mem_profile_interval" public:"false"`
+
 	// WebProfile enables pprof profiler serving data via HTTP API
 	// Default: false
 	// Public: No

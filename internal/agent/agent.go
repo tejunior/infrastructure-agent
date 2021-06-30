@@ -655,37 +655,8 @@ func (a *Agent) Run() (err error) {
 
 	cfg := a.Context.cfg
 
-	// Start CPU profiling
-	if cfg.CPUProfile != "" {
-		clog := alog.WithField("cpuProfile", cfg.CPUProfile)
-		clog.Debug("Starting CPU profiling.")
-		f, err := os.Create(cfg.CPUProfile)
-		if err != nil {
-			clog.WithError(err).Error("could not create CPU profile file")
-		} else {
-			defer helpers.CloseQuietly(f)
-			if err := pprof.StartCPUProfile(f); err != nil {
-				clog.WithError(err).Error("could not start CPU profile")
-			}
-			defer pprof.StopCPUProfile()
-		}
-	}
-	// Start memory profiling
-	if cfg.MemProfile != "" {
-		mlog := alog.WithField("memProfile", cfg.MemProfile)
-		mlog.Debug("Starting memory profiling.")
-		f, err := os.Create(cfg.MemProfile)
-		if err != nil {
-			mlog.WithError(err).Error("could not create memory profile file")
-		} else {
-			defer helpers.CloseQuietly(f)
-			runtime.GC()                  // get up-to-date statistics
-			runtime.MemProfileRate = 1024 // trigger alloc profile in a per MB basis
-			if err := pprof.WriteHeapProfile(f); err != nil {
-				mlog.WithError(err).Error("could not start memory profile")
-			}
-		}
-	}
+	a.cpuProfile()
+	go a.intervalMemoryProfile()
 
 	if cfg.ConnectEnabled {
 		go a.connect()
@@ -746,31 +717,8 @@ func (a *Agent) Run() (err error) {
 
 	go func() {
 		<-a.Context.Ctx.Done()
-		log.Info("Gracefully Exiting")
 
-		if sendTimer != nil {
-			sendTimer.Stop()
-		}
-		if reapTimer != nil {
-			reapTimer.Stop()
-		}
-		if removeEntitiesTicker != nil {
-			removeEntitiesTicker.Stop()
-		}
-		if a.Context.eventSender != nil {
-			if err := a.Context.eventSender.Stop(); err != nil {
-				log.WithError(err).Error("failed to stop event sender")
-			}
-		}
-		if a.metricsSender != nil {
-			if err := a.metricsSender.Stop(); err != nil {
-				log.WithError(err).Error("failed to stop metrics subsystem")
-			}
-		}
-
-		if a.notificationHandler != nil {
-			a.notificationHandler.Stop()
-		}
+		a.exitGracefully(sendTimer, reapTimer, removeEntitiesTicker)
 
 		close(exit)
 
@@ -869,6 +817,99 @@ func (a *Agent) Run() (err error) {
 			alog.Debug("Triggered periodic removal of outdated entities.")
 			a.removeOutdatedEntities(pastPeriodReportedEntities)
 		}
+	}
+}
+
+func (a *Agent) cpuProfile() {
+
+	cfg := a.Context.cfg
+
+	// Start CPU profiling
+	if cfg.CPUProfile != "" {
+		clog := alog.WithField("cpuProfile", cfg.CPUProfile)
+		clog.Debug("Starting CPU profiling.")
+		f, err := os.Create(cfg.CPUProfile)
+		if err != nil {
+			clog.WithError(err).Error("could not create CPU profile file")
+		} else {
+			defer helpers.CloseQuietly(f)
+			if err := pprof.StartCPUProfile(f); err != nil {
+				clog.WithError(err).Error("could not start CPU profile")
+			}
+			defer pprof.StopCPUProfile()
+		}
+	}
+}
+
+func (a *Agent) intervalMemoryProfile() {
+
+	cfg := a.Context.cfg
+
+	if cfg.MemProfileInterval > 0 {
+
+		ticker := time.NewTicker(time.Second * time.Duration(cfg.MemProfileInterval))
+
+		counter := 1
+
+		for {
+			select {
+			case <-ticker.C:
+				a.dumpMemoryProfile(counter * cfg.MemProfileInterval)
+				counter++
+			}
+		}
+	}
+}
+
+func (a *Agent) dumpMemoryProfile(agentRuntimeMark int) {
+
+	cfg := a.Context.cfg
+
+	// Start memory profiling
+	if cfg.MemProfile != "" {
+		memProfileFilename := fmt.Sprintf("%s_%ds", cfg.MemProfile, agentRuntimeMark)
+
+		mlog := alog.WithField("memProfile", memProfileFilename)
+		mlog.Debug("Starting memory profiling.")
+		f, err := os.Create(memProfileFilename)
+		if err != nil {
+			mlog.WithError(err).Error("could not create memory profile file")
+		} else {
+			defer helpers.CloseQuietly(f)
+			runtime.GC()                  // get up-to-date statistics
+			runtime.MemProfileRate = 1024 // trigger alloc profile in a per MB basis
+			if err := pprof.WriteHeapProfile(f); err != nil {
+				mlog.WithError(err).Error("could not start memory profile")
+			}
+		}
+	}
+}
+
+func (a *Agent) exitGracefully(sendTimer  *time.Timer, reapTimer, removeEntitiesTicker *time.Ticker){
+	log.Info("Gracefully Exiting")
+
+	if sendTimer != nil {
+		sendTimer.Stop()
+	}
+	if reapTimer != nil {
+		reapTimer.Stop()
+	}
+	if removeEntitiesTicker != nil {
+		removeEntitiesTicker.Stop()
+	}
+	if a.Context.eventSender != nil {
+		if err := a.Context.eventSender.Stop(); err != nil {
+			log.WithError(err).Error("failed to stop event sender")
+		}
+	}
+	if a.metricsSender != nil {
+		if err := a.metricsSender.Stop(); err != nil {
+			log.WithError(err).Error("failed to stop metrics subsystem")
+		}
+	}
+
+	if a.notificationHandler != nil {
+		a.notificationHandler.Stop()
 	}
 }
 
